@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 from steps.eight_points import eight_points_algorithm
 import numpy as np
 from scipy import linalg
+import math
 from utils.coordinate_transform import homogeneous_coordinate_calc
 
 import cv2
@@ -14,6 +15,88 @@ try:
     from cv2 import cv2
 except ImportError:
     pass
+
+
+def create_blank_image(width, height, rgb_color=(0, 0, 0)):
+    """Create new image(numpy array) filled with certain color in RGB"""
+    # Create black blank image
+    image = np.zeros((int(height), int(width), 3), np.uint8)
+
+    # Since OpenCV uses BGR, convert the color first
+    color = tuple(reversed(rgb_color))
+    # Fill image with color
+    image[:] = color
+
+    return image
+
+def interpolate_pixels_along_line(x0, y0, x1, y1):
+    """Uses Xiaolin Wu's line algorithm to interpolate all of the pixels along a
+    straight line, given two points (x0, y0) and (x1, y1)
+
+    Wikipedia article containing pseudo code that function was based off of:
+        http://en.wikipedia.org/wiki/Xiaolin_Wu's_line_algorithm
+    """
+    pixels = []
+    steep = abs(y1 - y0) > abs(x1 - x0)
+
+    # Ensure that the path to be interpolated is shallow and from left to right
+    if steep:
+        t = x0
+        x0 = y0
+        y0 = t
+
+        t = x1
+        x1 = y1
+        y1 = t
+
+    if x0 > x1:
+        t = x0
+        x0 = x1
+        x1 = t
+
+        t = y0
+        y0 = y1
+        y1 = t
+
+    dx = x1 - x0
+    dy = y1 - y0
+    gradient = dy / dx  # slope
+
+    # Get the first given coordinate and add it to the return list
+    x_end = round(x0)
+    y_end = y0 + (gradient * (x_end - x0))
+    xpxl0 = x_end
+    ypxl0 = round(y_end)
+    if steep:
+        pixels.extend([(ypxl0, xpxl0), (ypxl0 + 1, xpxl0)])
+    else:
+        pixels.extend([(xpxl0, ypxl0), (xpxl0, ypxl0 + 1)])
+
+    interpolated_y = y_end + gradient
+
+    # Get the second given coordinate to give the main loop a range
+    x_end = round(x1)
+    y_end = y1 + (gradient * (x_end - x1))
+    xpxl1 = x_end
+    ypxl1 = round(y_end)
+
+    # Loop between the first x coordinate and the second x coordinate, interpolating the y coordinates
+    for x in range(int(xpxl0 + 1), int(xpxl1)):
+        if steep:
+            pixels.extend([(math.floor(interpolated_y), x), (math.floor(interpolated_y) + 1, x)])
+
+        else:
+            pixels.extend([(x, math.floor(interpolated_y)), (x, math.floor(interpolated_y) + 1)])
+
+        interpolated_y += gradient
+
+    # Add the second given coordinate to the given list
+    if steep:
+        pixels.extend([(ypxl1, xpxl1), (ypxl1 + 1, xpxl1)])
+    else:
+        pixels.extend([(xpxl1, ypxl1), (xpxl1, ypxl1 + 1)])
+
+    return pixels
 
 
 # computes epopolar lines using fundamental matrix
@@ -48,12 +131,12 @@ def draw_lines_cv2(img1, img2, lines1, lines2, pts1, pts2):
         x0, y0 = map(int, [0, -line1[2] / line1[1]])
         x1, y1 = map(int, [width, -(line1[2] + line1[0] * width) / line1[1]])
         img1 = cv2.line(img1, (x0, y0), (x1, y1), color, 2)
-        img1 = cv2.circle(img1, tuple([pt1[0],pt1[1]]), 5, color, -1)
+        img1 = cv2.circle(img1, tuple([pt1[0], pt1[1]]), 5, color, -1)
 
         x2, y2 = map(int, [0, -line2[2] / line2[1]])
         x3, y3 = map(int, [width, -(line2[2] + line2[0] * width) / line2[1]])
         img2 = cv2.line(img2, (x2, y2), (x3, y3), color, 2)
-        img2 = cv2.circle(img2, tuple([pt2[0],pt2[1]]), 5, color, -1)
+        img2 = cv2.circle(img2, tuple([pt2[0], pt2[1]]), 5, color, -1)
     return img1, img2
 
 
@@ -64,23 +147,23 @@ def draw_extreme_lines_plt(img1, img2, lines1, lines2, epipole1, epipole2):
         lines - corresponding epilines '''
     height, width, color_channel_number = img1.shape
 
-    expand_u_left1 = min(0,epipole1[0])
+    expand_u_left1 = min(0, epipole1[0])
     expand_u_right1 = max(width, epipole1[0])
-    expand_u_left2 = min(0,epipole2[0])
+    expand_u_left2 = min(0, epipole2[0])
     expand_u_right2 = max(width, epipole2[0])
 
     plt.subplot(121)
     plt.imshow(img1)
     cnt = 0
     for line1 in lines1:
-        x0, y0 = map(int, [expand_u_left1, -(line1[2]+line1[0]*expand_u_left1) / line1[1]])
+        x0, y0 = map(int, [expand_u_left1, -(line1[2] + line1[0] * expand_u_left1) / line1[1]])
         x1, y1 = map(int, [expand_u_right1, -(line1[2] + line1[0] * expand_u_right1) / line1[1]])
-        if cnt<2:
-            plt.plot((x0,x1),(y0,y1), color='blue', linewidth=1)
-            cnt+=1
+        if cnt < 2:
+            plt.plot((x0, x1), (y0, y1), color='blue', linewidth=1)
+            cnt += 1
         else:
-            plt.plot((x0,x1),(y0,y1), color='red', linewidth=1)
-    plt.xlim(0,1000), plt.ylim(2000, -200)  # todo: change the limit to adapt to all conditions.
+            plt.plot((x0, x1), (y0, y1), color='red', linewidth=1)
+    plt.xlim(0, 1000), plt.ylim(2000, -200)  # todo: change the limit to adapt to all conditions.
 
     plt.subplot(122)
     plt.imshow(img2)
@@ -88,13 +171,13 @@ def draw_extreme_lines_plt(img1, img2, lines1, lines2, epipole1, epipole2):
     for line2 in lines2:
         x2, y2 = map(int, [expand_u_left2, -(line2[2] + line2[0] * expand_u_left2) / line2[1]])
         x3, y3 = map(int, [expand_u_right2, -(line2[2] + line2[0] * expand_u_right2) / line2[1]])
-        if cnt<2:
-            plt.plot((x2,x3),(y2,y3),color='r', linewidth=1)
-            cnt+=1
+        if cnt < 2:
+            plt.plot((x2, x3), (y2, y3), color='r', linewidth=1)
+            cnt += 1
         else:
-            plt.plot((x2,x3),(y2,y3), color='b', linewidth=1)
+            plt.plot((x2, x3), (y2, y3), color='b', linewidth=1)
 
-    plt.xlim(0,1000), plt.ylim(2000, -200)
+    plt.xlim(0, 1000), plt.ylim(2000, -200)
     plt.show()
 
 
@@ -153,6 +236,7 @@ def find_extreme_epilines(img, epipole):
 
     return extreme_epiline1, extreme_epiline2, vertex, region
 
+
 def compute_common_region(extreme_epilines, vertex):
     if extreme_epilines[2].dot(vertex[0]) * extreme_epilines[2].dot(vertex[1]) < 0:
         start_epl = extreme_epilines[2]
@@ -167,6 +251,8 @@ def compute_common_region(extreme_epilines, vertex):
 
 
 '''compute the epipolar lines used to reconstruct the image'''
+
+
 def compute_epilines_list(epp, start_epl, end_epl):
     epp_nh = np.array([epp[0], epp[1]])  # non_homogeneous epipole1's coordinates
 
@@ -219,33 +305,64 @@ def polar_rectification(img1, img2, matrix_f, epipole1, epipole2):
 
     # todo: generalization
     # points and epipolar lines used to reconstruct the image
-    pt_list1, epl_list1 = compute_epilines_list(epipole1,start_epl1,end_epl1)
-    pt_list2, epl_list2 = compute_epilines_list(epipole2,start_epl2,end_epl2)
+    pt_list1, epl_list1 = compute_epilines_list(epipole1, start_epl1, end_epl1)
+    pt_list2, epl_list2 = compute_epilines_list(epipole2, start_epl2, end_epl2)
 
     epl_list221 = []  # epipolar lines transferred back to the first image
     pt_list221 = []
     for i in pt_list2:
         epl221 = matrix_f.T @ np.append(i, 1)
-        pt221 = np.array([0, -epl221[2]/epl221[1]])
+        pt221 = np.array([0, -epl221[2] / epl221[1]])
         epl_list221.append(epl221)
         pt_list221.append(pt221)
 
     pt_list = []  # the final pt_list used to reconstruct the image(in image1)
     epl_list = []
     for pt1, pt221, e1, e221 in zip(pt_list1, pt_list221, epl_list1, epl_list221):
-        if pt1[1]<=pt221[1]:
+        if pt1[1] <= pt221[1]:
             pt_list.append(pt221)
             epl_list.append(e221)
         else:
             pt_list.append(pt1)
             epl_list.append(e1)
 
+    angle_list = []
+    for pt1, pt2 in zip(pt_list, pt_list[1:]):
+        angle = 0
+        if (pt1[1] - epipole1[1]) * (pt2[1] - epipole1[1]) >= 0:
+            angle = abs(np.arctan(np.abs(epipole1[1] - pt2[1]) / epipole1[0]) - np.arctan(
+                np.abs(epipole1[1] - pt1[1]) / epipole1[0]))
+        else:
+            angle = abs(np.arctan(np.abs(epipole1[1] - pt2[1]) / epipole1[0]) + np.arctan(
+                np.abs(epipole1[1] - pt1[1]) / epipole1[0]))
+        angle_list.append(angle)
 
-    print('debug')
+    white = (255,255,255)
+    r_max = np.linalg.norm(np.array([0, img1.shape[0]]) - np.array([epipole1[0],epipole1[1]]))
+    r_min = epipole1[0] - img1.shape[1]
+    biggest_angle = sum(angle_list)
+    rectified_img1 = create_blank_image(r_max, biggest_angle*(r_max-r_min)*img1.shape[0]/img1.shape[1]+1, rgb_color=white)
+
+    first_last_pixels_distance_list = []
+    current_angle = 0
+    for pt,angle in zip(pt_list, angle_list[:-1]):
+        pixels = interpolate_pixels_along_line(epipole1[0], epipole1[1], pt[0], pt[1])
+        valid_pixels = np.array([x for x in pixels if img1.shape[1] > x[0] >= 0 and img1.shape[0] > x[1] >= 0])
+        if valid_pixels.size!=0:
+            first_last_pixels_distance_list.append(np.linalg.norm(valid_pixels[0] - valid_pixels[-1]))
+
+        for px in valid_pixels:
+            r = np.linalg.norm(px - np.array([epipole1[0],epipole1[1]]))
+            rectified_img1[int(current_angle* (r_max-r_min)*img1.shape[0]/img1.shape[1]),int(r)] = img1[int(px[1]),int(px[0])]
+            print(int(current_angle* (r_max-r_min)*img1.shape[0]/img1.shape[1]))
+        current_angle = current_angle + angle
+
+    rectified_img1 = cv2.flip(rectified_img1,1)
+    plt.imshow(rectified_img1)
+    plt.show()
     # reconstruction
 
-
-
+    print('debug')
 
 
 def main():
