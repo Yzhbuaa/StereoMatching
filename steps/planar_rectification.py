@@ -110,28 +110,38 @@ def find_extreme_epilines(img, epipole):
     d = np.array([0, height, 1])
 
     vertex = []
+    region = 1  # Figure 3
 
     if x1 < 0:
         if y1 < 0:
             vertex = [d, b]
+            region = 1
         elif 0 <= y1 <= height:
             vertex = [d, a]
+            region = 4
         elif y1 > height:
             vertex = [c, a]
+            region = 7
     elif 0 <= x1 <= width:
         if y1 < 0:
             vertex = [a, b]
+            region = 2
         elif 0 <= y1 <= height:
             vertex = [d, d]  # todo: probably not right
+            region = 5
         elif y1 > height:
             vertex = [c, d]
+            region = 8
     elif x1 > width:
         if y1 < 0:
             vertex = [a, c]
+            region = 3
         elif 0 <= y1 <= height:
             vertex = [b, c]
+            region = 6
         elif y1 > height:
             vertex = [b, d]
+            region = 9
 
     x2 = vertex[0][0]
     y2 = vertex[0][1]
@@ -141,15 +151,47 @@ def find_extreme_epilines(img, epipole):
     extreme_epiline1 = np.array([1 / (x2 - x1), -1 / (y2 - y1), y1 / (y2 - y1) - x1 / (x2 - x1)])
     extreme_epiline2 = np.array([1 / (x3 - x1), -1 / (y3 - y1), y1 / (y3 - y1) - x1 / (x3 - x1)])
 
-    return extreme_epiline1, extreme_epiline2, vertex
+    return extreme_epiline1, extreme_epiline2, vertex, region
+
+def compute_common_region(extreme_epilines, vertex):
+    if extreme_epilines[2].dot(vertex[0]) * extreme_epilines[2].dot(vertex[1]) < 0:
+        start_epl = extreme_epilines[2]
+    else:
+        start_epl = extreme_epilines[0]
+
+    if extreme_epilines[3].dot(vertex[0]) * extreme_epilines[3].dot(vertex[1]) < 0:
+        end_epl = extreme_epilines[3]
+    else:
+        end_epl = extreme_epilines[1]
+    return start_epl, end_epl
+
+
+'''compute the epipolar lines used to reconstruct the image'''
+def compute_epilines_list(epp, start_epl, end_epl):
+    epp_nh = np.array([epp[0], epp[1]])  # non_homogeneous epipole1's coordinates
+
+    current_point = np.array([0, -(start_epl[2] / start_epl[1])])
+    end_point = np.array([0, -(end_epl[2] / end_epl[1])])
+
+    point_list = []
+    epl_list = []
+    while current_point[1] < end_point[1]:
+        point_list.append(current_point)
+        step = np.linalg.norm(epp_nh - current_point) / epp_nh[0]
+        next_point = current_point + np.array([0, step])
+        epl = np.cross(np.append(current_point, 1), epp)
+        epl_list.append(epl / epl[-1])
+        current_point = next_point
+
+    return point_list, epl_list
 
 
 def polar_rectification(img1, img2, matrix_f, epipole1, epipole2):
     # determining the common region
 
     # find extreme epipolar lines
-    extreme_epiline11, extreme_epiline12, vertex1 = find_extreme_epilines(img1, epipole1)
-    extreme_epiline21, extreme_epiline22, vertex2 = find_extreme_epilines(img2, epipole2)
+    extreme_epiline11, extreme_epiline12, vertex1, region1 = find_extreme_epilines(img1, epipole1)
+    extreme_epiline21, extreme_epiline22, vertex2, region2 = find_extreme_epilines(img2, epipole2)
 
     # transfer the extreme epipolar lines in image2 to image1
     extreme_epiline13 = matrix_f.T @ vertex2[0]
@@ -166,16 +208,40 @@ def polar_rectification(img1, img2, matrix_f, epipole1, epipole2):
     draw_extreme_lines_plt(img1, img2, extreme_epilines1, extreme_epilines2, epipole1, epipole2)
 
     # common region(choose two epipolar lines as boundry, Figure 4)
-    if extreme_epilines1[2].dot(vertex1[0]) * extreme_epilines1[2].dot(vertex1[1]) < 0:
-        region_start_epl1 = extreme_epilines1[2]
-    else:
-        region_start_epl1 = extreme_epilines1[0]
+    start_epl1, end_epl1 = compute_common_region(extreme_epilines1, vertex1)
+    start_epl2, end_epl2 = compute_common_region(extreme_epilines2, vertex2)
 
-    if extreme_epilines1[3].dot(vertex1[0]) * extreme_epilines1[3].dot(vertex1[1]) < 0:
-        region_end_epl1 = extreme_epilines1[3]
-    else:
-        region_end_epl1 = extreme_epilines1[1]
+    # find the border opposite to the epipole1 todo: judgement refinement
+    # i.e. the border furthest away from epipole1
+    # in my case, the border is u = 0
+    if region1 == 6:
+        opposite_border = np.array([1, 0, 0])  # function of the opposite border
 
+    # todo: generalization
+    # points and epipolar lines used to reconstruct the image
+    pt_list1, epl_list1 = compute_epilines_list(epipole1,start_epl1,end_epl1)
+    pt_list2, epl_list2 = compute_epilines_list(epipole2,start_epl2,end_epl2)
+
+    epl_list221 = []  # epipolar lines transferred back to the first image
+    pt_list221 = []
+    for i in pt_list2:
+        epl221 = matrix_f.T @ np.append(i, 1)
+        pt221 = np.array([0, -epl221[2]/epl221[1]])
+        epl_list221.append(epl221)
+        pt_list221.append(pt221)
+
+    pt_list = []  # the final pt_list used to reconstruct the image(in image1)
+    epl_list = []
+    for pt1, pt221, e1, e221 in zip(pt_list1, pt_list221, epl_list1, epl_list221):
+        if pt1[1]<=pt221[1]:
+            pt_list.append(pt221)
+            epl_list.append(e221)
+        else:
+            pt_list.append(pt1)
+            epl_list.append(e1)
+
+
+    print('debug')
     # reconstruction
 
 
