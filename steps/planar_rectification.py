@@ -1,12 +1,9 @@
-#  implementation of Marc Pollefeys's polar rectification algorithm)
-
 from steps.file_parser import parse_data
 from matplotlib import pyplot as plt
 from steps.eight_points import eight_points_algorithm
 import numpy as np
 from scipy import linalg
 import math
-from utils.coordinate_transform import homogeneous_coordinate_calc
 
 import cv2
 
@@ -15,6 +12,115 @@ try:
     from cv2 import cv2
 except ImportError:
     pass
+
+
+def planar_rectification(img1, img2, epipole1, epipole2, pts1_h, pts2_h, matrix_f):
+    # FIRST STEP
+    # find the center of each image
+    center = []
+    if img1.shape == img2.shape:
+        print('img1.shape == img2.shape')
+        center = np.array([img1.shape[1] / 2, img2.shape[0] / 2])
+        center = np.int_(center)
+    else:
+        print('error: image1 and image2 have different shapes')
+
+    # define T' the translational matrix
+    matrix_t_prime = np.array([[1, 0, -center[0]],
+                               [0, 1, -center[1]],
+                               [0, 0, 1]])
+
+    # define R' the rotational matrix
+
+    epipole2_t_trans = matrix_t_prime @ epipole2
+
+    if epipole2_t_trans[0] >= 0:
+        a = 1
+    else:
+        a = -1
+
+    r = np.sqrt(epipole2_t_trans[0]**2 + epipole2_t_trans[1]**2)
+
+    # Attention! not right handed coordinate system.
+    theta = np.arctan(epipole2_t_trans[1]/epipole2_t_trans[0])
+
+    matrix_r_prime = np.array([[np.cos(theta),  np.sin(theta), 0],
+                               [-np.sin(theta), np.cos(theta), 0],
+                               [0, 0, 1]])
+
+    # rotation matrix used in 03-epipolar-geometry.pdf from CMU's CS231A class.
+    matrix_r_prime = np.array([[a * epipole2_t_trans[0]/r, a*epipole2_t_trans[1]/r, 0],
+                               [-a * epipole2_t_trans[1]/r,  a*epipole2_t_trans[0]/r, 0],
+                               [0,0,1]])
+
+    # define G' so that H' == G' @ R' @ T'
+    epipole2_rt_trans = matrix_r_prime @ epipole2_t_trans
+    scalar_f = epipole2_rt_trans[0]
+
+    matrix_g_prime = np.array([[1 , 0, 0],
+                               [0, 1, 0],
+                               [-1 / scalar_f, 0, 1]])
+
+    # define H'
+    matrix_h_prime = matrix_g_prime @ matrix_r_prime @ matrix_t_prime
+
+    # SECOND STEP
+    matrix_e_prime = np.array([[0, -epipole2[2], epipole2[1]],
+                               [epipole2[2], 0, -epipole2[0]],
+                               [-epipole2[1], epipole2[0], 0]])
+
+    # proved in 03-epipolar-geometry.pdf
+    # mm = matrix_e_prime - matrix_e_prime@matrix_e_prime@matrix_e_prime/(matrix_e_prime@matrix_e_prime@matrix_e_prime)[0,1] * (-1)
+    matrix_m = matrix_e_prime @ matrix_f
+    scalar_matrix = np.reshape(epipole2, (3, 1)) @ np.array([[1, 1 ,1]]) # todo: why?
+    matrix_m = matrix_m + scalar_matrix
+
+    # pts1_hat and pts2_hat
+    pts1_hat = []
+    pts2_hat = []
+    for pt1, pt2 in zip(pts1_h, pts2_h):
+        pt1_hat = matrix_h_prime @ matrix_m @ pt1
+        pt1_hat = pt1_hat / pt1_hat[-1]
+        pt2_hat = matrix_h_prime @ pt2
+        pt2_hat = pt2_hat / pt2_hat[-1]
+        pts1_hat.append(pt1_hat)
+        pts2_hat.append(pt2_hat)
+
+    # solve the minimization problem on page 237 of MVG HZ
+    matrix_a = np.array(pts1_hat)
+    array_b = np.array(pts2_hat)[:, 0]
+
+    print(np.linalg.matrix_rank(matrix_a))
+
+    # algorithm A5.1 on page 458 of MVG HZ
+    u, s, vh = np.linalg.svd(matrix_a)
+    array_b_prime = np.transpose(u) @ array_b
+
+    array_y = []
+    for bi_prime, di in zip(array_b_prime, s):
+        yi = bi_prime / di
+        array_y.append(yi)
+
+    array_y = np.array(array_y)
+
+    abc = np.transpose(vh) @ array_y
+
+    # matrix H
+    matrix_ha = np.array([[abc[0], abc[1], abc[2]],
+                          [0, 1, 0],
+                          [0, 0, 1]])
+    matrix_h = matrix_ha @ matrix_h_prime @ matrix_m
+
+    print('H = ')
+    print(matrix_h)
+    print(' ')
+    print("H' = ")
+    print(matrix_h_prime)
+    print(' ')
+
+    return matrix_h, matrix_h_prime
+
+    print('debug')
 
 
 def create_blank_image(width, height, rgb_color=(0, 0, 0)):
@@ -29,348 +135,82 @@ def create_blank_image(width, height, rgb_color=(0, 0, 0)):
 
     return image
 
-def interpolate_pixels_along_line(x0, y0, x1, y1):
-    """Uses Xiaolin Wu's line algorithm to interpolate all of the pixels along a
-    straight line, given two points (x0, y0) and (x1, y1)
 
-    Wikipedia article containing pseudo code that function was based off of:
-        http://en.wikipedia.org/wiki/Xiaolin_Wu's_line_algorithm
-    """
-    pixels = []
-    steep = abs(y1 - y0) > abs(x1 - x0)
-
-    # Ensure that the path to be interpolated is shallow and from left to right
-    if steep:
-        t = x0
-        x0 = y0
-        y0 = t
-
-        t = x1
-        x1 = y1
-        y1 = t
-
-    if x0 > x1:
-        t = x0
-        x0 = x1
-        x1 = t
-
-        t = y0
-        y0 = y1
-        y1 = t
-
-    dx = x1 - x0
-    dy = y1 - y0
-    gradient = dy / dx  # slope
-
-    # Get the first given coordinate and add it to the return list
-    x_end = round(x0)
-    y_end = y0 + (gradient * (x_end - x0))
-    xpxl0 = x_end
-    ypxl0 = round(y_end)
-    if steep:
-        pixels.extend([(ypxl0, xpxl0), (ypxl0 + 1, xpxl0)])
-    else:
-        pixels.extend([(xpxl0, ypxl0), (xpxl0, ypxl0 + 1)])
-
-    interpolated_y = y_end + gradient
-
-    # Get the second given coordinate to give the main loop a range
-    x_end = round(x1)
-    y_end = y1 + (gradient * (x_end - x1))
-    xpxl1 = x_end
-    ypxl1 = round(y_end)
-
-    # Loop between the first x coordinate and the second x coordinate, interpolating the y coordinates
-    for x in range(int(xpxl0 + 1), int(xpxl1)):
-        if steep:
-            pixels.extend([(math.floor(interpolated_y), x), (math.floor(interpolated_y) + 1, x)])
-
-        else:
-            pixels.extend([(x, math.floor(interpolated_y)), (x, math.floor(interpolated_y) + 1)])
-
-        interpolated_y += gradient
-
-    # Add the second given coordinate to the given list
-    if steep:
-        pixels.extend([(ypxl1, xpxl1), (ypxl1 + 1, xpxl1)])
-    else:
-        pixels.extend([(xpxl1, ypxl1), (xpxl1, ypxl1 + 1)])
-
-    return pixels
-
-
-# computes epopolar lines using fundamental matrix
-# Parameters:
-#   pts - homogeneous form points in one image(left or right).
-#   which_image - Index of the image (1 or 2) that contains the points.
-#   matrix_f - fundamental matrix x'Fx = 0.
-# Returns:
-#   corresponding epipolar lines in another image.
-def compute_correspond_epilines(pts, which_image, matrix_f):
-    epilines = []
-    if which_image == 1:
-        for pt in pts:
-            epilines.append(matrix_f @ pt)
-    elif which_image == 2:
-        for pt in pts:
-            epilines.append(matrix_f.T @ pt)
-    else:
-        return
-    # todo: add judgements of false input
-    return np.array(epilines)
-
-
-# draw epipolar lines using opencv
-def draw_lines_cv2(img1, img2, lines1, lines2, pts1, pts2):
-    ''' img1 - image on which we draw the epilines for the points in img2
-        pts1 - points on img1
-        lines - corresponding epilines '''
-    height, width, color_channel_number = img1.shape
-    for line1, line2, pt1, pt2 in zip(lines1, lines2, pts1, pts2):
-        color = tuple(np.random.randint(0, 255, 3).tolist())
-        x0, y0 = map(int, [0, -line1[2] / line1[1]])
-        x1, y1 = map(int, [width, -(line1[2] + line1[0] * width) / line1[1]])
-        img1 = cv2.line(img1, (x0, y0), (x1, y1), color, 2)
-        img1 = cv2.circle(img1, tuple([pt1[0], pt1[1]]), 5, color, -1)
-
-        x2, y2 = map(int, [0, -line2[2] / line2[1]])
-        x3, y3 = map(int, [width, -(line2[2] + line2[0] * width) / line2[1]])
-        img2 = cv2.line(img2, (x2, y2), (x3, y3), color, 2)
-        img2 = cv2.circle(img2, tuple([pt2[0], pt2[1]]), 5, color, -1)
-    return img1, img2
-
-
-# draw epipolar lines using matplotlib
-def draw_extreme_lines_plt(img1, img2, lines1, lines2, epipole1, epipole2):
-    ''' img1 - image on which we draw the epilines for the points in img2
-        pts1 - points on img1
-        lines - corresponding epilines '''
-    height, width, color_channel_number = img1.shape
-
-    expand_u_left1 = min(0, epipole1[0])
-    expand_u_right1 = max(width, epipole1[0])
-    expand_u_left2 = min(0, epipole2[0])
-    expand_u_right2 = max(width, epipole2[0])
-
-    plt.subplot(121)
-    plt.imshow(img1)
-    cnt = 0
-    for line1 in lines1:
-        x0, y0 = map(int, [expand_u_left1, -(line1[2] + line1[0] * expand_u_left1) / line1[1]])
-        x1, y1 = map(int, [expand_u_right1, -(line1[2] + line1[0] * expand_u_right1) / line1[1]])
-        if cnt < 2:
-            plt.plot((x0, x1), (y0, y1), color='blue', linewidth=1)
-            cnt += 1
-        else:
-            plt.plot((x0, x1), (y0, y1), color='red', linewidth=1)
-    plt.xlim(0, 1000), plt.ylim(2000, -200)  # todo: change the limit to adapt to all conditions.
-
-    plt.subplot(122)
-    plt.imshow(img2)
-    cnt = 0
-    for line2 in lines2:
-        x2, y2 = map(int, [expand_u_left2, -(line2[2] + line2[0] * expand_u_left2) / line2[1]])
-        x3, y3 = map(int, [expand_u_right2, -(line2[2] + line2[0] * expand_u_right2) / line2[1]])
-        if cnt < 2:
-            plt.plot((x2, x3), (y2, y3), color='r', linewidth=1)
-            cnt += 1
-        else:
-            plt.plot((x2, x3), (y2, y3), color='b', linewidth=1)
-
-    plt.xlim(0, 1000), plt.ylim(2000, -200)
-    plt.show()
-
-
-def find_extreme_epilines(img, epipole):
-    height, width, color_channel = img.shape
-
-    x1 = epipole[0]
-    y1 = epipole[1]
+def generate_blank_image_size(img_to_be_rectified, matrix_h):
+    # ensure the rectified images side length
+    img_width = img_to_be_rectified.shape[1]
+    img_height = img_to_be_rectified.shape[0]
 
     a = np.array([0, 0, 1])
-    b = np.array([width, 0, 1])
-    c = np.array([width, height, 1])
-    d = np.array([0, height, 1])
+    b = np.array([img_width-1, 0, 1])
+    c = np.array([img_width - 1, img_height - 1, 1])
+    d = np.array([0, img_height - 1, 1])
+    abcd = np.array([a, b, c, d])
 
-    vertex = []
-    region = 1  # Figure 3
+    abcd_trans = []
+    for i in abcd:
+        i_trans = matrix_h @ i
+        i_trans = i_trans / i_trans[-1]
+        abcd_trans.append(i_trans)
 
-    if x1 < 0:
-        if y1 < 0:
-            vertex = [d, b]
-            region = 1
-        elif 0 <= y1 <= height:
-            vertex = [d, a]
-            region = 4
-        elif y1 > height:
-            vertex = [c, a]
-            region = 7
-    elif 0 <= x1 <= width:
-        if y1 < 0:
-            vertex = [a, b]
-            region = 2
-        elif 0 <= y1 <= height:
-            vertex = [d, d]  # todo: probably not right
-            region = 5
-        elif y1 > height:
-            vertex = [c, d]
-            region = 8
-    elif x1 > width:
-        if y1 < 0:
-            vertex = [a, c]
-            region = 3
-        elif 0 <= y1 <= height:
-            vertex = [b, c]
-            region = 6
-        elif y1 > height:
-            vertex = [b, d]
-            region = 9
-
-    x2 = vertex[0][0]
-    y2 = vertex[0][1]
-    x3 = vertex[1][0]
-    y3 = vertex[1][1]
-
-    extreme_epiline1 = np.array([1 / (x2 - x1), -1 / (y2 - y1), y1 / (y2 - y1) - x1 / (x2 - x1)])
-    extreme_epiline2 = np.array([1 / (x3 - x1), -1 / (y3 - y1), y1 / (y3 - y1) - x1 / (x3 - x1)])
-
-    return extreme_epiline1, extreme_epiline2, vertex, region
+    max_y =max(abcd_trans[0][1], abcd_trans[1][1], abcd_trans[2][1], abcd_trans[3][1])
+    max_x =max(abcd_trans[0][0], abcd_trans[1][0], abcd_trans[2][0], abcd_trans[3][0])
+    min_y = min(abcd_trans[0][1], abcd_trans[1][1], abcd_trans[2][1], abcd_trans[3][1])
+    min_x = min(abcd_trans[0][0], abcd_trans[1][0], abcd_trans[2][0], abcd_trans[3][0])
 
 
-def compute_common_region(extreme_epilines, vertex):
-    if extreme_epilines[2].dot(vertex[0]) * extreme_epilines[2].dot(vertex[1]) < 0:
-        start_epl = extreme_epilines[2]
-    else:
-        start_epl = extreme_epilines[0]
-
-    if extreme_epilines[3].dot(vertex[0]) * extreme_epilines[3].dot(vertex[1]) < 0:
-        end_epl = extreme_epilines[3]
-    else:
-        end_epl = extreme_epilines[1]
-    return start_epl, end_epl
+    return max_x, max_y, min_x, min_y
 
 
-'''compute the epipolar lines used to reconstruct the image'''
+def generate_rectified_image(img_to_be_rectified, matrix_h, blank_img, min_x, min_y):
+    # # ensure the rectified images side length
+    img_width = img_to_be_rectified.shape[1]
+    img_height = img_to_be_rectified.shape[0]
+    #
+    # a = np.array([0, 0, 1])
+    # b = np.array([img_width-1, 0, 1])
+    # c = np.array([img_width - 1, img_height - 1, 1])
+    # d = np.array([0, img_height - 1, 1])
+    # abcd = np.array([a, b, c, d])
+    #
+    # abcd_trans = []
+    # for i in abcd:
+    #     i_trans = matrix_h @ i
+    #     i_trans = i_trans / i_trans[-1]
+    #     abcd_trans.append(i_trans)
+    #
+    #
+    # max_y =max(abcd_trans[0][1], abcd_trans[1][1], abcd_trans[2][1], abcd_trans[3][1])
+    # max_x =max(abcd_trans[0][0], abcd_trans[1][0], abcd_trans[2][0], abcd_trans[3][0])
+    # min_y = min(abcd_trans[0][1], abcd_trans[1][1], abcd_trans[2][1], abcd_trans[3][1])
+    # min_x = min(abcd_trans[0][0], abcd_trans[1][0], abcd_trans[2][0], abcd_trans[3][0])
+    #
+    # rectified_img_height = max_y -min_y+1
+    # rectified_img_width = max_x - min_x +1
+    #
+    # rectified_img = create_blank_image(rectified_img_width,rectified_img_height,(255,255,255))
 
+    rectified_img = blank_img
+    for i in range(0, img_width):
+        for j in range(0, img_height):
+            px_trans = []
+            px_trans = matrix_h @ np.array([i, j, 1])
+            px_trans = px_trans / px_trans[-1]
+            px_trans[0] = px_trans[0] - min_x
+            px_trans[1] = px_trans[1] - min_y
+            print(i, j)
 
-def compute_epilines_list(epp, start_epl, end_epl):
-    epp_nh = np.array([epp[0], epp[1]])  # non_homogeneous epipole1's coordinates
+            rectified_img[int(px_trans[1]),int(px_trans[0])] = img_to_be_rectified[j, i]
 
-    current_point = np.array([0, -(start_epl[2] / start_epl[1])])
-    end_point = np.array([0, -(end_epl[2] / end_epl[1])])
-
-    point_list = []
-    epl_list = []
-    while current_point[1] < end_point[1]:
-        point_list.append(current_point)
-        step = np.linalg.norm(epp_nh - current_point) / epp_nh[0]
-        next_point = current_point + np.array([0, step])
-        epl = np.cross(np.append(current_point, 1), epp)
-        epl_list.append(epl / epl[-1])
-        current_point = next_point
-
-    return point_list, epl_list
-
-
-def polar_rectification(img1, img2, matrix_f, epipole1, epipole2):
-    # determining the common region
-
-    # find extreme epipolar lines
-    extreme_epiline11, extreme_epiline12, vertex1, region1 = find_extreme_epilines(img1, epipole1)
-    extreme_epiline21, extreme_epiline22, vertex2, region2 = find_extreme_epilines(img2, epipole2)
-
-    # transfer the extreme epipolar lines in image2 to image1
-    extreme_epiline13 = matrix_f.T @ vertex2[0]
-    extreme_epiline14 = matrix_f.T @ vertex2[1]
-
-    # transfer the extreme epipolar lines in image1 to image2
-    extreme_epiline23 = matrix_f @ vertex1[0]
-    extreme_epiline24 = matrix_f @ vertex1[1]
-
-    extreme_epilines1 = np.array([extreme_epiline11, extreme_epiline12, extreme_epiline13, extreme_epiline14])
-    extreme_epilines2 = np.array([extreme_epiline21, extreme_epiline22, extreme_epiline23, extreme_epiline24])
-
-    img1, img2 = draw_lines_cv2(img1, img2, extreme_epilines1, extreme_epilines2, np.array(vertex1), np.array(vertex2))
-    draw_extreme_lines_plt(img1, img2, extreme_epilines1, extreme_epilines2, epipole1, epipole2)
-
-    # common region(choose two epipolar lines as boundry, Figure 4)
-    start_epl1, end_epl1 = compute_common_region(extreme_epilines1, vertex1)
-    start_epl2, end_epl2 = compute_common_region(extreme_epilines2, vertex2)
-
-    # find the border opposite to the epipole1 todo: judgement refinement
-    # i.e. the border furthest away from epipole1
-    # in my case, the border is u = 0
-    if region1 == 6:
-        opposite_border = np.array([1, 0, 0])  # function of the opposite border
-
-    # todo: generalization
-    # points and epipolar lines used to reconstruct the image
-    pt_list1, epl_list1 = compute_epilines_list(epipole1, start_epl1, end_epl1)
-    pt_list2, epl_list2 = compute_epilines_list(epipole2, start_epl2, end_epl2)
-
-    epl_list221 = []  # epipolar lines transferred back to the first image
-    pt_list221 = []
-    for i in pt_list2:
-        epl221 = matrix_f.T @ np.append(i, 1)
-        pt221 = np.array([0, -epl221[2] / epl221[1]])
-        epl_list221.append(epl221)
-        pt_list221.append(pt221)
-
-    pt_list = []  # the final pt_list used to reconstruct the image(in image1)
-    epl_list = []
-    for pt1, pt221, e1, e221 in zip(pt_list1, pt_list221, epl_list1, epl_list221):
-        if pt1[1] <= pt221[1]:
-            pt_list.append(pt221)
-            epl_list.append(e221)
-        else:
-            pt_list.append(pt1)
-            epl_list.append(e1)
-
-    angle_list = []
-    for pt1, pt2 in zip(pt_list, pt_list[1:]):
-        angle = 0
-        if (pt1[1] - epipole1[1]) * (pt2[1] - epipole1[1]) >= 0:
-            angle = abs(np.arctan(np.abs(epipole1[1] - pt2[1]) / epipole1[0]) - np.arctan(
-                np.abs(epipole1[1] - pt1[1]) / epipole1[0]))
-        else:
-            angle = abs(np.arctan(np.abs(epipole1[1] - pt2[1]) / epipole1[0]) + np.arctan(
-                np.abs(epipole1[1] - pt1[1]) / epipole1[0]))
-        angle_list.append(angle)
-
-    white = (255,255,255)
-    r_max = np.linalg.norm(np.array([0, img1.shape[0]]) - np.array([epipole1[0],epipole1[1]]))
-    r_min = epipole1[0] - img1.shape[1]
-    biggest_angle = sum(angle_list)
-    rectified_img1 = create_blank_image(r_max, biggest_angle*(r_max-r_min)*img1.shape[0]/img1.shape[1]+1, rgb_color=white)
-
-    first_last_pixels_distance_list = []
-    current_angle = 0
-    for pt,angle in zip(pt_list, angle_list[:-1]):
-        pixels = interpolate_pixels_along_line(epipole1[0], epipole1[1], pt[0], pt[1])
-        valid_pixels = np.array([x for x in pixels if img1.shape[1] > x[0] >= 0 and img1.shape[0] > x[1] >= 0])
-        if valid_pixels.size!=0:
-            first_last_pixels_distance_list.append(np.linalg.norm(valid_pixels[0] - valid_pixels[-1]))
-
-        for px in valid_pixels:
-            r = np.linalg.norm(px - np.array([epipole1[0],epipole1[1]]))
-            rectified_img1[int(current_angle* (r_max-r_min)*img1.shape[0]/img1.shape[1]),int(r)] = img1[int(px[1]),int(px[0])]
-            print(int(current_angle* (r_max-r_min)*img1.shape[0]/img1.shape[1]))
-        current_angle = current_angle + angle
-
-    rectified_img1 = cv2.flip(rectified_img1,1)
-    plt.imshow(rectified_img1)
-    plt.show()
-    # reconstruction
-
-    print('debug')
+    return rectified_img
 
 
 def main():
     # read images
-    img1 = cv2.imread('../data/04L5m2.jpg')  # left image
+    img1 = cv2.imread('../data/img1_with_8epipolar_lines.jpg')  # left image
     b1, g1, r1 = cv2.split(img1)
     img1 = cv2.merge([r1, g1, b1])
-    img2 = cv2.imread('../data/04R5m2.jpg')  # right image
+    img2 = cv2.imread('../data/img2_with_8epipolar_lines.jpg')  # right image
     b2, g2, r2 = cv2.split(img2)
     img2 = cv2.merge([r2, g2, b2])
 
@@ -406,20 +246,34 @@ def main():
     print('Epipole2:')
     print(epipole2)
 
-    # calculates epipolar lines
-    epilines1 = compute_correspond_epilines(pts2_h, which_image=2, matrix_f=matrix_f)
-    epilines2 = compute_correspond_epilines(pts1_h, which_image=1, matrix_f=matrix_f)
+    matrix_h, matrix_h_prime = planar_rectification(img1, img2, epipole1, epipole2, pts1_h, pts2_h, matrix_f)
 
-    # # draw epipolar lines and corresponding points
-    # img1, img2 = draw_lines(img1, img2, epilines1, epilines2, pts1_nh, pts2_nh)
-    #
-    # plt.subplot(121), plt.imshow(img1)
-    # plt.subplot(122), plt.imshow(img2)
-    # plt.show()
+    max_x1, max_y1,min_x1, min_y1 = generate_blank_image_size(img1, matrix_h)
+    max_x2, max_y2,min_x2, min_y2 = generate_blank_image_size(img2, matrix_h_prime)
 
-    polar_rectification(img1, img2, matrix_f, epipole1, epipole2)
+    max_x = max(max_x1, max_x2)
+    max_y = max(max_y1,max_y2)
+    min_x = min(min_x1, min_x2)
+    min_y = min(min_y1, min_y2)
 
-    print('debug')
+    blank_img_height = max_x-min_x + 2
+    blank_img_width = max_y - min_y + 2
+    blank_img1 = create_blank_image(blank_img_width,blank_img_height,(255,255,255))
+    blank_img2 = create_blank_image(blank_img_width,blank_img_height,(255,255,255))
+
+    img1_rectified = generate_rectified_image(img1, matrix_h, blank_img1, min_x, min_y)
+    plt.subplot(121)
+    plt.imshow(img1_rectified)
+    plt.show()
+
+    img2_rectified = generate_rectified_image(img2, matrix_h_prime, blank_img2, min_x, min_y)
+    plt.subplot(121)
+    plt.imshow(img1_rectified)
+    plt.subplot(122)
+    plt.imshow(img2_rectified)
+    plt.show()
+
+    print('break point')
 
 
 if __name__ == '__main__':

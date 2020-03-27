@@ -101,8 +101,9 @@ def eight_points_algorithm(sixteen_points):
 
 
 def main():
-    sixteen_points = parse_data()
+    sixteen_points = parse_data(file_name='eight_points_qu')
     matrix_f = eight_points_algorithm(sixteen_points)
+    print('F:')
     print(matrix_f)
 
 
