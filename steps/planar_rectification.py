@@ -39,30 +39,30 @@ def planar_rectification(img1, img2, epipole1, epipole2, pts1_h, pts2_h, matrix_
     else:
         a = -1
 
-    r = np.sqrt(epipole2_t_trans[0]**2 + epipole2_t_trans[1]**2)
+    r = np.sqrt(epipole2_t_trans[0] ** 2 + epipole2_t_trans[1] ** 2)
 
     # Attention! not right handed coordinate system.
-    theta = np.arctan(epipole2_t_trans[1]/epipole2_t_trans[0])
+    theta = np.arctan(epipole2_t_trans[1] / epipole2_t_trans[0])
 
-    matrix_r_prime = np.array([[np.cos(theta),  np.sin(theta), 0],
+    matrix_r_prime = np.array([[np.cos(theta), np.sin(theta), 0],
                                [-np.sin(theta), np.cos(theta), 0],
                                [0, 0, 1]])
 
     # rotation matrix used in 03-epipolar-geometry.pdf from CMU's CS231A class.
-    matrix_r_prime = np.array([[a * epipole2_t_trans[0]/r, a*epipole2_t_trans[1]/r, 0],
-                               [-a * epipole2_t_trans[1]/r,  a*epipole2_t_trans[0]/r, 0],
-                               [0,0,1]])
+    matrix_r_prime = np.array([[a * epipole2_t_trans[0] / r, a * epipole2_t_trans[1] / r, 0],
+                               [-a * epipole2_t_trans[1] / r, a * epipole2_t_trans[0] / r, 0],
+                               [0, 0, 1]])
 
     # define G' so that H' == G' @ R' @ T'
     epipole2_rt_trans = matrix_r_prime @ epipole2_t_trans
     scalar_f = epipole2_rt_trans[0]
 
-    matrix_g_prime = np.array([[1 , 0, 0],
+    matrix_g_prime = np.array([[1, 0, 0],
                                [0, 1, 0],
                                [-1 / scalar_f, 0, 1]])
 
     # define H'
-    matrix_h_prime = matrix_g_prime @ matrix_r_prime @ matrix_t_prime
+    matrix_h_prime = np.linalg.inv(matrix_t_prime) @ matrix_g_prime @ matrix_r_prime @ matrix_t_prime
 
     # SECOND STEP
     matrix_e_prime = np.array([[0, -epipole2[2], epipole2[1]],
@@ -72,7 +72,7 @@ def planar_rectification(img1, img2, epipole1, epipole2, pts1_h, pts2_h, matrix_
     # proved in 03-epipolar-geometry.pdf
     # mm = matrix_e_prime - matrix_e_prime@matrix_e_prime@matrix_e_prime/(matrix_e_prime@matrix_e_prime@matrix_e_prime)[0,1] * (-1)
     matrix_m = matrix_e_prime @ matrix_f
-    scalar_matrix = np.reshape(epipole2, (3, 1)) @ np.array([[1, 1 ,1]]) # todo: why?
+    scalar_matrix = np.reshape(epipole2, (3, 1)) @ np.array([[1, 1, 1]])  # todo: why?
     matrix_m = matrix_m + scalar_matrix
 
     # pts1_hat and pts2_hat
@@ -136,13 +136,13 @@ def create_blank_image(width, height, rgb_color=(0, 0, 0)):
     return image
 
 
-def generate_blank_image_size(img_to_be_rectified, matrix_h):
+def generate_blank_image(img_to_be_rectified, matrix_h):
     # ensure the rectified images side length
     img_width = img_to_be_rectified.shape[1]
     img_height = img_to_be_rectified.shape[0]
 
     a = np.array([0, 0, 1])
-    b = np.array([img_width-1, 0, 1])
+    b = np.array([img_width - 1, 0, 1])
     c = np.array([img_width - 1, img_height - 1, 1])
     d = np.array([0, img_height - 1, 1])
     abcd = np.array([a, b, c, d])
@@ -153,12 +153,12 @@ def generate_blank_image_size(img_to_be_rectified, matrix_h):
         i_trans = i_trans / i_trans[-1]
         abcd_trans.append(i_trans)
 
-    max_y =max(abcd_trans[0][1], abcd_trans[1][1], abcd_trans[2][1], abcd_trans[3][1])
-    max_x =max(abcd_trans[0][0], abcd_trans[1][0], abcd_trans[2][0], abcd_trans[3][0])
+    max_y = max(abcd_trans[0][1], abcd_trans[1][1], abcd_trans[2][1], abcd_trans[3][1])
+    max_x = max(abcd_trans[0][0], abcd_trans[1][0], abcd_trans[2][0], abcd_trans[3][0])
     min_y = min(abcd_trans[0][1], abcd_trans[1][1], abcd_trans[2][1], abcd_trans[3][1])
     min_x = min(abcd_trans[0][0], abcd_trans[1][0], abcd_trans[2][0], abcd_trans[3][0])
 
-
+    # blank_img = create_blank_image(blank_img_width,blank_img_height,(255,255,255))
     return max_x, max_y, min_x, min_y
 
 
@@ -200,17 +200,17 @@ def generate_rectified_image(img_to_be_rectified, matrix_h, blank_img, min_x, mi
             px_trans[1] = px_trans[1] - min_y
             print(i, j)
 
-            rectified_img[int(px_trans[1]),int(px_trans[0])] = img_to_be_rectified[j, i]
+            rectified_img[int(px_trans[1]), int(px_trans[0])] = img_to_be_rectified[j, i]
 
     return rectified_img
 
 
 def main():
     # read images
-    img1 = cv2.imread('../data/img1_with_8epipolar_lines.jpg')  # left image
+    img1 = cv2.imread('../data/04L5m2.jpg')  # left image
     b1, g1, r1 = cv2.split(img1)
     img1 = cv2.merge([r1, g1, b1])
-    img2 = cv2.imread('../data/img2_with_8epipolar_lines.jpg')  # right image
+    img2 = cv2.imread('../data/04R5m2.jpg')  # right image
     b2, g2, r2 = cv2.split(img2)
     img2 = cv2.merge([r2, g2, b2])
 
@@ -248,30 +248,33 @@ def main():
 
     matrix_h, matrix_h_prime = planar_rectification(img1, img2, epipole1, epipole2, pts1_h, pts2_h, matrix_f)
 
-    max_x1, max_y1,min_x1, min_y1 = generate_blank_image_size(img1, matrix_h)
-    max_x2, max_y2,min_x2, min_y2 = generate_blank_image_size(img2, matrix_h_prime)
+    max_x1, max_y1, min_x1, min_y1 = generate_blank_image(img1, matrix_h)
+    max_x2, max_y2, min_x2, min_y2 = generate_blank_image(img2, matrix_h_prime)
 
     max_x = max(max_x1, max_x2)
-    max_y = max(max_y1,max_y2)
+    max_y = max(max_y1, max_y2)
     min_x = min(min_x1, min_x2)
     min_y = min(min_y1, min_y2)
 
-    blank_img_height = max_x-min_x + 2
-    blank_img_width = max_y - min_y + 2
-    blank_img1 = create_blank_image(blank_img_width,blank_img_height,(255,255,255))
-    blank_img2 = create_blank_image(blank_img_width,blank_img_height,(255,255,255))
+    blank_img_width = max_x - min_x + 1
+    blank_img_height = max_y - min_y + 1
+    blank_img1 = create_blank_image(blank_img_width, blank_img_height, (255, 255, 255))
+    blank_img2 = create_blank_image(blank_img_width, blank_img_height, (255, 255, 255))
 
-    img1_rectified = generate_rectified_image(img1, matrix_h, blank_img1, min_x, min_y)
-    plt.subplot(121)
-    plt.imshow(img1_rectified)
-    plt.show()
+    # img1_rectified = generate_rectified_image(img1, matrix_h, blank_img1, min_x, min_y)
+    img1_rectified = cv2.warpPerspective(img1, matrix_h, (int(blank_img_width), int(blank_img_height)))
 
-    img2_rectified = generate_rectified_image(img2, matrix_h_prime, blank_img2, min_x, min_y)
+    # img2_rectified = generate_rectified_image(img2, matrix_h_prime, blank_img2, min_x, min_y)
+    img2_rectified = cv2.warpPerspective(img2, matrix_h_prime, (int(blank_img_width), int(blank_img_height)))
+
     plt.subplot(121)
     plt.imshow(img1_rectified)
     plt.subplot(122)
     plt.imshow(img2_rectified)
     plt.show()
+
+    cv2.imwrite('../data/img1_planar_rectified_interpolated.jpg', img1_rectified)
+    cv2.imwrite('../data/img2_planar_rectified_interpolated.jpg', img2_rectified)
 
     print('break point')
 

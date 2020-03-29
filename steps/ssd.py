@@ -36,16 +36,20 @@ def ssd(rectified_img1, big_img, pt, window_size):
 
 
 def main():
-    rectified_img1 = cv2.imread('../data/rectified_img.jpg', cv2.IMREAD_GRAYSCALE)
-    rectified_img2 = cv2.imread('../data/rectified_img_prime.jpg', cv2.IMREAD_GRAYSCALE)
+    rectified_img1 = cv2.imread('../data/img1_planar_rectified_interpolated.jpg', cv2.IMREAD_GRAYSCALE)
+    rectified_img2 = cv2.imread('../data/img2_planar_rectified_interpolated.jpg', cv2.IMREAD_GRAYSCALE)
 
-    plt.subplot(121)
-    plt.imshow(rectified_img1, cmap='gray')
-    plt.subplot(122)
-    plt.imshow(rectified_img2, cmap='gray')
-    plt.show()
+    # plt.subplot(121)
+    # plt.imshow(rectified_img1, cmap='gray')
+    # plt.subplot(122)
+    # plt.imshow(rectified_img2, cmap='gray')
+    # plt.show()
+    # big_img = np.concatenate((rectified_img1, rectified_img2), axis=1)
+    # cv2.imwrite('../data/big_img_planar_rectified_interpolated.jpg',big_img)
+    # plt.imshow(big_img)
+    # plt.show()
 
-    pts = np.loadtxt('../data/ssd_points.txt')
+    pts = np.loadtxt('../data/ssd_points_planar_rectified_interpolated.txt')
 
     for i in range(5, 52, 2):
         big_img = np.concatenate((rectified_img1, rectified_img2), axis=1)
@@ -65,7 +69,7 @@ def main():
             big_img = cv2.circle(big_img, tuple([spt[0], spt[1]]), 10, color, -1)
             big_img = cv2.line(big_img,tuple([pt[0], pt[1]]),tuple([spt[0], spt[1]]),color,2)
 
-        file_name = '../data/search_window_size__' + str(window_size) + '.jpg'
+        file_name = '../data/planar_rectificated_interpolated_search_window_size__' + str(window_size) + '.jpg'
         cv2.imwrite(file_name, big_img)
         plt.imshow(big_img, cmap='gray')
         plt.show()
